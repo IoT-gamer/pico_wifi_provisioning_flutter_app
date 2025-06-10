@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 part 'ble_state.dart';
 
@@ -31,8 +32,49 @@ class BleCubit extends Cubit<BleState> {
     _initBle();
   }
 
+  // Checks and requests necessary permissions.
+  Future<bool> checkPermissions() async {
+    Map<Permission, PermissionStatus> statuses =
+        await [
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+          Permission.location,
+        ].request();
+
+    final scanPermission = statuses[Permission.bluetoothScan];
+    final connectPermission = statuses[Permission.bluetoothConnect];
+    final locationPermission = statuses[Permission.location];
+
+    if (scanPermission == PermissionStatus.granted &&
+        connectPermission == PermissionStatus.granted &&
+        locationPermission == PermissionStatus.granted) {
+      return true;
+    } else {
+      String errorMessage =
+          'Please grant all required permissions to use the app.';
+      if (scanPermission!.isPermanentlyDenied ||
+          connectPermission!.isPermanentlyDenied ||
+          locationPermission!.isPermanentlyDenied) {
+        errorMessage =
+            'Permissions are permanently denied. Please open app settings to grant them.';
+        // Consider adding: openAppSettings();
+      }
+      emit(state.copyWith(errorMessage: errorMessage));
+      return false;
+    }
+  }
+
   // Initialization
   Future<void> _initBle() async {
+    // Call permission check first.
+    if (Platform.isAndroid) {
+      final permissionsGranted = await checkPermissions();
+      if (!permissionsGranted) {
+        // Stop initialization if permissions are not granted
+        return;
+      }
+    }
+
     if (await FlutterBluePlus.isSupported == false) {
       emit(
         state.copyWith(errorMessage: "Bluetooth not supported by this device"),
@@ -67,6 +109,12 @@ class BleCubit extends Cubit<BleState> {
   }
 
   Future<void> startScan() async {
+    // Re-check permissions before starting a scan, in case they were revoked.
+    if (Platform.isAndroid) {
+      final permissionsGranted = await checkPermissions();
+      if (!permissionsGranted) return;
+    }
+
     if (state.adapterState != BluetoothAdapterState.on || state.isScanning) {
       return;
     }
